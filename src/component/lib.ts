@@ -160,7 +160,14 @@ export const recordTransaction = mutation({
       .first();
 
     if (existing) {
-      await ctx.db.patch(existing._id, { ...args, updatedAt: now });
+      // Keep the email the merchant originally passed to initializeTransaction
+      // rather than whatever the webhook/verify response echoes back. Some
+      // processors (Flutterwave's test mode, notably) rewrite the customer
+      // email in their own responses — e.g. prefixing it with a sandbox
+      // routing tag like "ravesb_<hash>_" — which would otherwise silently
+      // overwrite the real address callers query by.
+      const { customerEmail: _incomingEmail, ...rest } = args;
+      await ctx.db.patch(existing._id, { ...rest, updatedAt: now });
       return existing._id;
     }
 
@@ -189,7 +196,11 @@ export const recordSubscriptionEvent = mutation({
       .first();
 
     if (existing) {
-      await ctx.db.patch(existing._id, { ...args, updatedAt: now });
+      // Same reasoning as recordTransaction: don't let a later webhook or
+      // sync call overwrite the email a subscription was first recorded
+      // under with a processor-mangled value.
+      const { customerEmail: _incomingEmail, ...rest } = args;
+      await ctx.db.patch(existing._id, { ...rest, updatedAt: now });
       return existing._id;
     }
 

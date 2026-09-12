@@ -449,7 +449,11 @@ export class Flutterwave {
     for (const sub of subscriptions) {
       await ctx.runMutation(this.component.lib.recordSubscriptionEvent, {
         subscriptionId: String(sub.id),
-        customerEmail: sub.customer?.customer_email ?? args.email,
+        // Use the email the caller queried by, not Flutterwave's own
+        // customer_email field — in test mode Flutterwave rewrites it (e.g.
+        // "ravesb_<hash>_real@email.com"), which would make the record
+        // unfindable by the email a merchant actually knows the customer as.
+        customerEmail: args.email,
         planId: sub.plan !== undefined ? String(sub.plan) : undefined,
         amount: sub.amount ?? undefined,
         status: sub.status === "active" ? "active" : "cancelled",
