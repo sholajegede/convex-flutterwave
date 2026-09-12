@@ -29,13 +29,14 @@ const active = await flutterwave.hasActiveSubscription(ctx, { customerEmail: "cu
 
 ## What this does
 
-Flutterwave fires webhook events every time a payment action happens — a charge completes, a subscription is cancelled. Without this component, you have to write and maintain your own webhook receiver, HMAC signature verification, database schema, and reactive queries.
+Flutterwave fires webhook events every time a payment action happens — a charge completes, a subscription is cancelled. Without this component, you have to write and maintain your own webhook receiver, signature verification, database schema, and reactive queries.
 
 This component owns all of that. Drop it in, mount the webhook, and your Convex app immediately has:
 
 - **Reactive transaction state** — every transaction, live in Convex, keyed by `tx_ref`
 - **Reactive subscription state** — subscription status for recurring payment plans, live in Convex
-- **Checkout** — `initializeTransaction()` generates a Flutterwave-hosted payment link
+- **Checkout** — `initializeTransaction()` generates a Flutterwave-hosted payment link for one-time payments or, with a `paymentPlan`, for subscriptions
+- **Plan management** — `createPaymentPlan()` / `listPaymentPlans()` manage the billing plans subscriptions are built on
 - **Server-side verification** — `verifyTransaction()` confirms a transaction directly with Flutterwave
 - **Subscription management** — `cancelSubscription()` / `enableSubscription()` call Flutterwave directly and keep local state in sync
 - **Webhook idempotency** — duplicate deliveries of the same event are detected and skipped
@@ -51,6 +52,7 @@ This component owns all of that. Drop it in, mount the webhook, and your Convex 
 - [Setup](#setup)
 - [Usage](#usage)
 - [Checkout](#checkout)
+- [Plans](#plans)
 - [Subscriptions](#subscriptions)
 - [API Reference](#api-reference)
 - [Type Reference](#type-reference)
@@ -58,6 +60,7 @@ This component owns all of that. Drop it in, mount the webhook, and your Convex 
 - [Database Schema](#database-schema)
 - [Customer IDs](#customer-ids)
 - [Testing](#testing)
+- [Example App](#example-app)
 - [Limitations](#limitations)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
@@ -202,7 +205,7 @@ export const confirmPayment = action({
 // Returns: { status, txRef, flwRef, transactionId, amount, currency, customerEmail, ... }
 ```
 
-Flutterwave redirects to your `redirectUrl` with `transaction_id` and `tx_ref` query params — pass `transaction_id` into `verifyTransaction`.
+Flutterwave redirects to your `redirectUrl` with `status` and `tx_ref` query params on every outcome, and `transaction_id` **only when a chargeable attempt was made** — a card declined at the gateway or an abandoned checkout redirects back with just `status=failed` and `tx_ref`, no `transaction_id` to verify. Handle that case on your result screen rather than assuming `transaction_id` is always present.
 
 ### Read a transaction reactively
 
@@ -237,9 +240,74 @@ export const getHistory = query({
 
 Call `verifyTransaction()` from your callback route (or rely on the `charge.completed` webhook) to confirm the final status — never trust the client-side redirect alone.
 
+Two optional arguments shape what the customer sees at checkout:
+
+- **`paymentOptions`** restricts which payment methods Flutterwave's hosted page offers — any of `"card"`, `"account"`, `"banktransfer"`, `"ussd"`, `"nqr"`, `"mpesa"`, `"mobilemoneyghana"`, `"mobilemoneyuganda"`, `"mobilemoneyrwanda"`, `"mobilemoneyzambia"`, `"barter"`, `"credit"`, `"opay"`, `"fawrypay"`. Omit it to let Flutterwave offer everything enabled on your account.
+- **`paymentPlan`** turns a one-time checkout into a subscription — see [Plans](#plans).
+
+```ts
+await flutterwave.initializeTransaction(ctx, {
+  email: "customer@example.com",
+  amount: 5000,
+  paymentOptions: ["card", "banktransfer", "ussd"],
+  redirectUrl: "https://yourapp.com/payment/callback",
+});
+```
+
+Unlike some processors, Flutterwave takes `amount` in the currency's **major unit** — 5000 means ₦5,000, not ₦50.00 — so there's no subunit conversion to do before calling this.
+
+## Plans
+
+Plans are the billing schedule a subscription is built on — a name, an interval (`hourly`, `daily`, `weekly`, `monthly`, `quarterly`, `yearly`, `bi-annually`, or `"every X <unit>"`), and optionally a fixed amount and currency. Create one, then pass its `planId` as `paymentPlan` to `initializeTransaction()`: Flutterwave automatically restricts the checkout to card payments, and the customer's first successful charge starts the subscription.
+
+```ts
+export const createProPlan = action({
+  args: {},
+  handler: async (ctx) => {
+    return await flutterwave.createPaymentPlan(ctx, {
+      name: "Pro Monthly",
+      amount: 5000, // ₦5,000 — major unit, not kobo
+      interval: "monthly",
+      currency: "NGN",
+    });
+  },
+});
+// Returns: { planId, name, amount, interval, currency, status }
+
+export const startSubscription = action({
+  args: { email: v.string(), planId: v.string(), amount: v.number() },
+  handler: async (ctx, args) => {
+    return await flutterwave.initializeTransaction(ctx, {
+      email: args.email,
+      amount: args.amount,
+      paymentPlan: args.planId,
+      redirectUrl: "https://yourapp.com/payment/callback",
+    });
+  },
+});
+```
+
+`listPaymentPlans()` returns every plan already created on your Flutterwave account, so you can check for an existing plan by name before creating a duplicate — this is exactly the pattern the [example app](#example-app) uses to bootstrap its demo plans on first run.
+
 ## Subscriptions
 
-Recurring billing on Flutterwave is built on **Payment Plans**: a customer subscribes by paying against a plan, and Flutterwave manages renewals. This component mirrors subscription state reactively as webhooks arrive, and exposes cancel/enable against Flutterwave's [Subscriptions API](https://developer.flutterwave.com/v3.0/reference/activate-a-subscription-1):
+Flutterwave has **no "subscription created" webhook** — a subscription comes into existence the moment a customer's first charge against a `paymentPlan` succeeds, and the only events that fire afterward are `charge.completed` (each recurring charge) and `subscription.cancelled`. The `charge.completed` payload doesn't even carry the subscription's own id, only the plan id — so this component cannot create a local subscription record purely from webhooks the way it can for transactions.
+
+Instead, call `syncCustomerSubscriptions()` right after a plan-linked checkout returns successfully — it reads the customer's live subscriptions from Flutterwave's [List Subscriptions](https://developer.flutterwave.com/v3.0/reference/list-all-subscriptions-1) endpoint and upserts them locally:
+
+```ts
+export const syncSubscriptions = action({
+  args: { email: v.string() },
+  handler: async (ctx, args) => {
+    return await flutterwave.syncCustomerSubscriptions(ctx, { email: args.email });
+  },
+});
+// Returns: number of subscriptions synced
+```
+
+The [example app](#example-app) calls this automatically once `verifyTransaction()` confirms a subscription checkout succeeded, and again on demand from a "Sync from Flutterwave" button on the history screen — do the same in your app rather than waiting on a webhook that will never arrive for subscription creation.
+
+Once a subscription is known locally (synced, or updated by a later webhook), cancel/enable it directly:
 
 ```ts
 export const cancelPlan = action({
@@ -251,25 +319,35 @@ export const cancelPlan = action({
 });
 ```
 
-`subscriptionId` is Flutterwave's numeric subscription id, available via `getSubscription()` or the `subscription.cancelled` webhook.
+`subscriptionId` is Flutterwave's numeric subscription id, available via `getSubscription()`, `listSubscriptions()`, or the `subscription.cancelled` webhook.
 
 ## API Reference
 
 | Method | Kind | Description |
 | --- | --- | --- |
-| `initializeTransaction(ctx, args)` | action | Starts a Flutterwave checkout, returns the hosted payment link |
+| `initializeTransaction(ctx, args)` | action | Starts a Flutterwave checkout, returns the hosted payment link — pass `paymentPlan` to start a subscription |
 | `verifyTransaction(ctx, args)` | action | Confirms a transaction's final status with Flutterwave |
+| `createPaymentPlan(ctx, args)` | action | Creates a billing plan on Flutterwave |
+| `listPaymentPlans(ctx)` | action | Lists every billing plan on your Flutterwave account |
 | `cancelSubscription(ctx, args)` | action | Cancels a subscription on Flutterwave and locally |
 | `enableSubscription(ctx, args)` | action | Re-activates a cancelled subscription |
+| `syncCustomerSubscriptions(ctx, args)` | action | Pulls a customer's subscriptions straight from Flutterwave and upserts them locally — the only way local state learns a subscription exists, since Flutterwave has no subscription-created webhook |
 | `getTransaction(ctx, args)` | query | Fetch one transaction by `tx_ref` |
 | `listTransactions(ctx, args)` | query | List a customer's transactions, newest first |
 | `getSubscription(ctx, args)` | query | Fetch one subscription by subscription id |
 | `listSubscriptions(ctx, args)` | query | List a customer's subscriptions |
 | `hasActiveSubscription(ctx, args)` | query | `true` if the customer has an active subscription |
+| `listRecentEvents(ctx, args?)` | query | Raw webhook event log, newest first — audit trail or a live console |
+| `getStats(ctx)` | query | Aggregate transaction/subscription/event counts for a small dashboard |
 
 ## Type Reference
 
 ```ts
+type FlutterwavePaymentOption =
+  | "card" | "account" | "banktransfer" | "ussd" | "nqr" | "mpesa"
+  | "mobilemoneyghana" | "mobilemoneyuganda" | "mobilemoneyrwanda" | "mobilemoneyzambia"
+  | "barter" | "credit" | "opay" | "fawrypay";
+
 type InitializeTransactionArgs = {
   email: string;
   amount: number;
@@ -278,7 +356,26 @@ type InitializeTransactionArgs = {
   txRef?: string;
   customerName?: string;
   customerPhoneNumber?: string;
+  paymentOptions?: FlutterwavePaymentOption[];
+  paymentPlan?: string;
   metadata?: Record<string, unknown>;
+};
+
+type CreatePaymentPlanArgs = {
+  name: string;
+  interval: string; // e.g. "monthly", "yearly", "every 2 weeks"
+  amount?: number;
+  currency?: string;
+  duration?: number;
+};
+
+type PaymentPlanResult = {
+  planId: string;
+  name: string;
+  amount: number;
+  interval: string;
+  currency: string;
+  status: string;
 };
 
 type Transaction = {
@@ -313,7 +410,7 @@ Flutterwave doesn't sign webhook payloads with a computed digest — it echoes b
 | `charge.completed` | Upserts the transaction as `successful` or `failed` |
 | `subscription.cancelled` | Marks the subscription `cancelled` |
 
-All other event types are accepted (HTTP 200) but ignored, so you can register every event on one endpoint without errors.
+All other event types are accepted (HTTP 200) but ignored, so you can register every event on one endpoint without errors. Note there is no `subscription.created`-style event — see [Subscriptions](#subscriptions) for how this component learns a subscription exists.
 
 ## Database Schema
 
@@ -334,6 +431,10 @@ webhookEvents: {
 }
 ```
 
+Plans are not stored locally — Flutterwave is the source of truth for them, the same way it is for verified transactions. `listPaymentPlans()` reads live from Flutterwave.
+
+`listRecentEvents()` reads `webhookEvents` directly — every event this component's webhook handler has ever received, whether or not it changed a transaction or subscription. `getStats()` returns row counts across all three tables with a full scan, intended for a small dashboard rather than a high-volume production metric.
+
 ## Customer IDs
 
 This component keys everything on `customerEmail` — the email Flutterwave has on file for the transaction or subscription. If your app identifies customers a different way (e.g. an internal user id), keep a mapping from your own id to the email you pass into this component.
@@ -346,11 +447,35 @@ npm run test
 
 Component logic is tested with [`convex-test`](https://www.npmjs.com/package/convex-test) in `src/component/lib.test.ts`. Import `convex-flutterwave/test` in your own app to register this component's schema against your test instance.
 
+## Example App
+
+`example/` is a full Vite + React demo, styled with Flutterwave's and Convex's own brand colors, that exercises the entire component end to end against your own Flutterwave test-mode account:
+
+- **One-time payment** — pick an amount and currency, choose which payment options to offer, pay, and land on a result screen driven by `verifyTransaction()`.
+- **Subscriptions** — the app bootstraps two demo plans via `createPaymentPlan()` / `listPaymentPlans()` on first load and lets you subscribe to either; after a successful subscription checkout it calls `syncCustomerSubscriptions()` automatically, since Flutterwave never sends a subscription-created webhook.
+- **Retry flow** — a declined or abandoned payment (including the no-`transaction_id` case Flutterwave's failure redirect produces) surfaces a "Try again" action that returns you to the same flow with your details preserved.
+- **Transaction history** — a live Convex query over `listTransactions()` / `listSubscriptions()` that updates the instant a webhook lands, plus a manual "Sync from Flutterwave" button for subscriptions.
+- **Live developer console** — a side-docked panel that interleaves client-side actions (checkout started, verifying…) with the real webhook log from `listRecentEvents()`, reactively, so you can watch the entire lifecycle of a payment or subscription as it happens. Click any webhook row to see its raw payload.
+
+Run it with:
+
+```bash
+cd example
+npm install
+npx convex dev
+# in another terminal
+npm run dev
+```
+
+Use Flutterwave's [test cards](https://developer.flutterwave.com/docs/integration-guides/testing-helpers) to exercise both outcomes — `5531 8866 5214 2950` (expiry `09/32`, CVV `564`, OTP `12345`, PIN `3310`) always succeeds, `5143 0105 2233 9965` (expiry `08/32`, CVV `276`) always fails address verification so you can see the retry flow.
+
 ## Limitations
 
 - `amount` is in the currency's major unit (e.g. naira), unlike some processors that use subunits — this component passes it through as-is.
 - Only the webhook events listed above update local state; other events are received but not persisted beyond the raw idempotency record.
-- `cancelSubscription` / `enableSubscription` require Flutterwave's numeric subscription id, only available after a `subscription.cancelled` webhook or a call to Flutterwave's list-subscriptions endpoint.
+- There is no webhook for subscription creation — you must call `syncCustomerSubscriptions()` yourself after a plan-linked checkout succeeds (see [Subscriptions](#subscriptions)).
+- `cancelSubscription` / `enableSubscription` require Flutterwave's numeric subscription id, only available after a sync, a `subscription.cancelled` webhook, or a call to `listSubscriptions()`.
+- `createPaymentPlan` / `listPaymentPlans` talk to Flutterwave directly on every call — this component does not cache plans locally.
 
 ## Troubleshooting
 
@@ -358,7 +483,9 @@ Component logic is tested with [`convex-test`](https://www.npmjs.com/package/con
 
 **Transaction stays `pending`** — `initializeTransaction` only records `pending`; it becomes `successful`/`failed` once the `charge.completed` webhook arrives or you call `verifyTransaction`.
 
-**Subscription never appears** — subscriptions are created by Flutterwave when a customer pays against a payment plan, not by this component. Confirm the `subscription.cancelled` webhook is registered and reaching your endpoint, or fetch subscriptions directly from Flutterwave to backfill.
+**Subscription never appears** — Flutterwave doesn't send a webhook when a subscription is created, only for later charges and cancellations. Call `syncCustomerSubscriptions({ email })` after a plan-linked checkout succeeds — this is required, not just a fallback.
+
+**No `transaction_id` after redirect** — Flutterwave only includes `transaction_id` in the redirect when a chargeable attempt was made. A declined or abandoned checkout redirects with just `status` and `tx_ref`; there's nothing to verify server-side in that case.
 
 ## Contributing
 
