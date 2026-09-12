@@ -27,12 +27,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       checkAndRecordEvent: FunctionReference<
         "mutation",
         "internal",
-        {
-          eventId: string;
-          eventType: string;
-          payload: string;
-          txRef?: string;
-        },
+        { eventId: string; eventType: string; payload: string; txRef?: string },
         { alreadyProcessed: boolean },
         Name
       >;
@@ -180,10 +175,7 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       updateSubscriptionStatus: FunctionReference<
         "mutation",
         "internal",
-        {
-          status: "active" | "cancelled";
-          subscriptionId: string;
-        },
+        { status: "active" | "cancelled"; subscriptionId: string },
         null,
         Name
       >;
