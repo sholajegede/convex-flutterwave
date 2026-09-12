@@ -436,31 +436,29 @@ export class Flutterwave {
    * them locally — call it after a plan-linked checkout returns, or from a
    * manual "sync" action, as a reliable way to populate subscription state.
    */
+  private async fetchFlutterwaveSubscriptions(email?: string): Promise<{
+    status: string;
+    message?: string;
+    data?: Array<{
+      id: number;
+      amount?: number;
+      plan?: number;
+      status: string;
+      customer?: { customer_email?: string };
+    }>;
+  }> {
+    const url = email
+      ? `${FLUTTERWAVE_API_BASE}/subscriptions?email=${encodeURIComponent(email)}`
+      : `${FLUTTERWAVE_API_BASE}/subscriptions`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${this.options.secretKey}` } });
+    return await res.json();
+  }
+
   async syncCustomerSubscriptions(
     ctx: GenericActionCtx<GenericDataModel>,
     args: { email: string },
   ): Promise<number> {
-    type SubscriptionsResponse = {
-      status: string;
-      message?: string;
-      data?: Array<{
-        id: number;
-        amount?: number;
-        plan?: number;
-        status: string;
-        customer?: { customer_email?: string };
-      }>;
-    };
-
-    const fetchSubscriptions = async (email?: string): Promise<SubscriptionsResponse> => {
-      const url = email
-        ? `${FLUTTERWAVE_API_BASE}/subscriptions?email=${encodeURIComponent(email)}`
-        : `${FLUTTERWAVE_API_BASE}/subscriptions`;
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${this.options.secretKey}` } });
-      return (await res.json()) as SubscriptionsResponse;
-    };
-
-    const json = await fetchSubscriptions(args.email);
+    const json = await this.fetchFlutterwaveSubscriptions(args.email);
     if (json.status !== "success") {
       throw new Error(json.message ?? "Failed to fetch Flutterwave subscriptions");
     }
@@ -473,7 +471,7 @@ export class Flutterwave {
     // subscription exists. Fall back to an unfiltered list and match after
     // stripping that rewrite, rather than trusting the filter alone.
     if (subscriptions.length === 0) {
-      const all = await fetchSubscriptions();
+      const all = await this.fetchFlutterwaveSubscriptions();
       if (all.status === "success") {
         subscriptions = (all.data ?? []).filter(
           (sub) =>
@@ -491,6 +489,41 @@ export class Flutterwave {
         // unfindable by the email a merchant actually knows the customer as.
         customerEmail: args.email,
         planId: sub.plan !== undefined ? String(sub.plan) : undefined,
+        amount: sub.amount ?? undefined,
+        status: sub.status === "active" ? "active" : "cancelled",
+      });
+    }
+    return subscriptions.length;
+  }
+
+  /**
+   * Attributes every subscription on a given plan to one email, regardless
+   * of what Flutterwave itself has on file as that subscription's customer.
+   * This is unsafe to reach for by default — a real plan can have many
+   * subscribers — but it's exactly what's needed when Flutterwave's
+   * test-mode sandbox has substituted its own fixed customer identity for
+   * every subscription (see the README's Subscriptions section), making
+   * email-based sync unable to find anything at all. Reach for it only
+   * where you already know (or, in a single-developer test/demo context,
+   * can safely assume) there's one subscriber to claim — the example app
+   * uses it as a fallback for exactly that reason.
+   */
+  async syncSubscriptionsByPlan(
+    ctx: GenericActionCtx<GenericDataModel>,
+    args: { planId: string; email: string },
+  ): Promise<number> {
+    const json = await this.fetchFlutterwaveSubscriptions();
+    if (json.status !== "success") {
+      throw new Error(json.message ?? "Failed to fetch Flutterwave subscriptions");
+    }
+    const planId = Number(args.planId);
+    const subscriptions = (json.data ?? []).filter((sub) => sub.plan === planId);
+
+    for (const sub of subscriptions) {
+      await ctx.runMutation(this.component.lib.recordSubscriptionEvent, {
+        subscriptionId: String(sub.id),
+        customerEmail: args.email,
+        planId: String(planId),
         amount: sub.amount ?? undefined,
         status: sub.status === "active" ? "active" : "cancelled",
       });

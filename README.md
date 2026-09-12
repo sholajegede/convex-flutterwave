@@ -321,6 +321,10 @@ export const cancelPlan = action({
 
 `subscriptionId` is Flutterwave's numeric subscription id, available via `getSubscription()`, `listSubscriptions()`, or the `subscription.cancelled` webhook.
 
+> **Test mode:** Flutterwave's sandbox appears to associate every subscription with one fixed test-customer identity — verified directly against their API, every subscription created across multiple plans and multiple different checkout emails came back with the exact same `customer.customer_email` (a `ravesb_<hash>_` — prefixed address), regardless of what email the checkout actually used. `syncCustomerSubscriptions()` already falls back to an unfiltered list and matches after stripping that prefix, which recovers subscriptions Flutterwave filed under the real email — but it can't recover a subscription in test mode at all if Flutterwave discarded the real email entirely. This has not been observed in live mode, where the real customer email is preserved correctly.
+>
+> For exactly that test-mode case, `syncSubscriptionsByPlan(ctx, { planId, email })` attributes every subscription on one plan to a given email, no matching required — unsafe to reach for by default since a real plan can have many subscribers, but fine when you already know (or, testing locally against your own sandbox account, can safely assume) there's one to claim. The [example app](#example-app)'s "Sync from Flutterwave" button already does this automatically as a fallback when syncing by email finds nothing, checking its own two demo plans — so testers never need to know or type Flutterwave's sandbox identity themselves.
+
 ## API Reference
 
 | Method | Kind | Description |
@@ -332,6 +336,7 @@ export const cancelPlan = action({
 | `cancelSubscription(ctx, args)` | action | Cancels a subscription on Flutterwave and locally |
 | `enableSubscription(ctx, args)` | action | Re-activates a cancelled subscription |
 | `syncCustomerSubscriptions(ctx, args)` | action | Pulls a customer's subscriptions straight from Flutterwave and upserts them locally — the only way local state learns a subscription exists, since Flutterwave has no subscription-created webhook |
+| `syncSubscriptionsByPlan(ctx, args)` | action | Attributes every subscription on one plan to a given email — a test-mode fallback for when Flutterwave's sandbox makes email-based sync unable to find anything (see [Subscriptions](#subscriptions)) |
 | `getTransaction(ctx, args)` | query | Fetch one transaction by `tx_ref` |
 | `listTransactions(ctx, args)` | query | List a customer's transactions, newest first |
 | `getSubscription(ctx, args)` | query | Fetch one subscription by subscription id |

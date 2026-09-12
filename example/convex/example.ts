@@ -93,7 +93,28 @@ export const enableSubscription = action({
 export const syncSubscriptions = action({
   args: { email: v.string() },
   handler: async (ctx, args) => {
-    return await flutterwave.syncCustomerSubscriptions(ctx, { email: args.email });
+    const byEmail = await flutterwave.syncCustomerSubscriptions(ctx, { email: args.email });
+    if (byEmail > 0) return byEmail;
+
+    // Flutterwave's test mode substitutes one fixed sandbox customer
+    // identity for every subscription, regardless of the email a checkout
+    // actually used (see the README) — so the sync above can legitimately
+    // find nothing even though a matching test subscription exists. This
+    // app only ever creates subscriptions on its own two demo plans, so as
+    // a fallback, check each one directly and claim any subscription found
+    // there under the email the tester is actually using. Safe here because
+    // this is a single-developer local demo, not a multi-customer
+    // production app — see syncSubscriptionsByPlan's own doc comment.
+    const plans = await flutterwave.listPaymentPlans(ctx);
+    const demoPlans = plans.filter((plan) => plan.name.startsWith("Convex + Flutterwave Demo"));
+    let synced = 0;
+    for (const plan of demoPlans) {
+      synced += await flutterwave.syncSubscriptionsByPlan(ctx, {
+        planId: plan.planId,
+        email: args.email,
+      });
+    }
+    return synced;
   },
 });
 
