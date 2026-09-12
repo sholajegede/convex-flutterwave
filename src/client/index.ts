@@ -38,6 +38,11 @@ export type VerifyTransactionResult = {
   customerEmail: string;
 };
 
+// Flutterwave does not sign webhook payloads. Instead, it echoes back the
+// secret hash you configured in the Dashboard, verbatim, in a `verif-hash`
+// header — verification is a direct (constant-time) string comparison, not
+// an HMAC digest of the request body. See:
+// https://developer.flutterwave.com/docs/integration-guides/webhooks
 function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let mismatch = 0;
@@ -45,19 +50,6 @@ function timingSafeEqual(a: string, b: string): boolean {
     mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
   }
   return mismatch === 0;
-}
-
-async function hmacSha256Base64(secret: string, payload: string): Promise<string> {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw",
-    enc.encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = await crypto.subtle.sign("HMAC", key, enc.encode(payload));
-  return btoa(String.fromCharCode(...new Uint8Array(signature)));
 }
 
 export class Flutterwave {
@@ -72,7 +64,7 @@ export class Flutterwave {
 
     this.webhookHandler = httpActionGeneric(async (ctx, request) => {
       const rawBody = await request.text();
-      const signature = request.headers.get("flutterwave-signature");
+      const signature = request.headers.get("verif-hash");
 
       if (!signature) {
         return new Response(JSON.stringify({ error: "Missing signature" }), {
@@ -81,8 +73,7 @@ export class Flutterwave {
         });
       }
 
-      const expected = await hmacSha256Base64(webhookSecretHash, rawBody);
-      if (!timingSafeEqual(expected, signature)) {
+      if (!timingSafeEqual(webhookSecretHash, signature)) {
         console.error("convex-flutterwave: webhook signature mismatch");
         return new Response(JSON.stringify({ error: "Invalid signature" }), {
           status: 401,

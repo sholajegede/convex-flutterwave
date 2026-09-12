@@ -306,7 +306,7 @@ type Subscription = {
 
 ## Webhook Events
 
-The webhook handler verifies the `flutterwave-signature` header (base64-encoded HMAC-SHA256 of the raw request body, keyed with your webhook secret hash) before processing anything, and de-duplicates by event id so retried deliveries are safe. It currently acts on:
+Flutterwave doesn't sign webhook payloads with a computed digest — it echoes back the exact secret hash you configured in the Dashboard, verbatim, in a `verif-hash` header. The webhook handler compares that header directly (constant-time) against `FLW_WEBHOOK_SECRET_HASH` before processing anything, and de-duplicates by event id so retried deliveries are safe. It currently acts on:
 
 | Event | Effect |
 | --- | --- |
@@ -354,7 +354,7 @@ Component logic is tested with [`convex-test`](https://www.npmjs.com/package/con
 
 ## Troubleshooting
 
-**Webhook returns 401** — the `flutterwave-signature` header didn't match. Confirm `FLW_WEBHOOK_SECRET_HASH` matches exactly what's set in the Flutterwave Dashboard webhook settings — it is not your API secret key.
+**Webhook returns 401** — the `verif-hash` header didn't match. Confirm `FLW_WEBHOOK_SECRET_HASH` matches exactly what's set as the secret hash in the Flutterwave Dashboard webhook settings — it is not your API secret key.
 
 **Transaction stays `pending`** — `initializeTransaction` only records `pending`; it becomes `successful`/`failed` once the `charge.completed` webhook arrives or you call `verifyTransaction`.
 

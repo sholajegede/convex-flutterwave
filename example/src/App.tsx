@@ -25,7 +25,7 @@ export default function App() {
       redirectUrl: window.location.href,
     });
     setTxRef(result.txRef);
-    window.location.href = result.paymentLink;
+    window.location.assign(result.paymentLink);
   }
 
   return (
