@@ -210,7 +210,13 @@ export class Flutterwave {
         amount: args.amount,
         currency: args.currency ?? "NGN",
         redirect_url: args.redirectUrl,
-        payment_plan: args.paymentPlan,
+        // Flutterwave requires payment_plan as a numeric id, not a string —
+        // this component's own PaymentPlanResult.planId is a string (for
+        // consistency with every other id in this API), so it's converted
+        // here. Sending it as a string doesn't error; Flutterwave just
+        // silently processes the charge as a normal one-time payment
+        // instead of linking it to the plan, so no subscription is created.
+        payment_plan: args.paymentPlan !== undefined ? Number(args.paymentPlan) : undefined,
         payment_options: args.paymentOptions?.join(", "),
         customer: {
           email: args.email,
@@ -284,6 +290,13 @@ export class Flutterwave {
       paidAt: data.created_at ? new Date(data.created_at).getTime() : undefined,
     });
 
+    // recordTransaction keeps the email the transaction was first created
+    // under rather than whatever Flutterwave just echoed back (see its
+    // comment — test mode rewrites it). Read that back so callers — and
+    // anything they render, like a result screen — see the real address
+    // too, not just what's in the database.
+    const stored = await ctx.runQuery(this.component.lib.getTransaction, { txRef: data.tx_ref });
+
     return {
       status: data.status,
       txRef: data.tx_ref,
@@ -294,7 +307,7 @@ export class Flutterwave {
       paymentType: data.payment_type ?? undefined,
       narration: data.narration ?? undefined,
       paidAt: data.created_at ? new Date(data.created_at).getTime() : undefined,
-      customerEmail: data.customer?.email ?? "",
+      customerEmail: stored?.customerEmail ?? data.customer?.email ?? "",
     };
   }
 
@@ -427,11 +440,7 @@ export class Flutterwave {
     ctx: GenericActionCtx<GenericDataModel>,
     args: { email: string },
   ): Promise<number> {
-    const res = await fetch(
-      `${FLUTTERWAVE_API_BASE}/subscriptions?email=${encodeURIComponent(args.email)}`,
-      { headers: { Authorization: `Bearer ${this.options.secretKey}` } },
-    );
-    const json = (await res.json()) as {
+    type SubscriptionsResponse = {
       status: string;
       message?: string;
       data?: Array<{
@@ -442,10 +451,37 @@ export class Flutterwave {
         customer?: { customer_email?: string };
       }>;
     };
+
+    const fetchSubscriptions = async (email?: string): Promise<SubscriptionsResponse> => {
+      const url = email
+        ? `${FLUTTERWAVE_API_BASE}/subscriptions?email=${encodeURIComponent(email)}`
+        : `${FLUTTERWAVE_API_BASE}/subscriptions`;
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${this.options.secretKey}` } });
+      return (await res.json()) as SubscriptionsResponse;
+    };
+
+    const json = await fetchSubscriptions(args.email);
     if (json.status !== "success") {
       throw new Error(json.message ?? "Failed to fetch Flutterwave subscriptions");
     }
-    const subscriptions = json.data ?? [];
+    let subscriptions = json.data ?? [];
+
+    // Flutterwave's ?email= filter matches against whatever email it has on
+    // file for the subscription — in test mode that's the same "ravesb_
+    // <hash>_" rewritten address seen elsewhere, not the real one, so
+    // filtering by the real email can come back empty even when a matching
+    // subscription exists. Fall back to an unfiltered list and match after
+    // stripping that rewrite, rather than trusting the filter alone.
+    if (subscriptions.length === 0) {
+      const all = await fetchSubscriptions();
+      if (all.status === "success") {
+        subscriptions = (all.data ?? []).filter(
+          (sub) =>
+            sub.customer?.customer_email?.replace(/^ravesb_[0-9a-f]+_/i, "") === args.email,
+        );
+      }
+    }
+
     for (const sub of subscriptions) {
       await ctx.runMutation(this.component.lib.recordSubscriptionEvent, {
         subscriptionId: String(sub.id),
