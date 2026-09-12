@@ -476,6 +476,7 @@ Use Flutterwave's [test cards](https://developer.flutterwave.com/docs/integratio
 - There is no webhook for subscription creation — you must call `syncCustomerSubscriptions()` yourself after a plan-linked checkout succeeds (see [Subscriptions](#subscriptions)).
 - `cancelSubscription` / `enableSubscription` require Flutterwave's numeric subscription id, only available after a sync, a `subscription.cancelled` webhook, or a call to `listSubscriptions()`.
 - `createPaymentPlan` / `listPaymentPlans` talk to Flutterwave directly on every call — this component does not cache plans locally.
+- In **test mode**, Flutterwave rewrites the customer email it echoes back in webhook and verify responses — e.g. `real@email.com` comes back as `ravesb_<hash>_real@email.com`. This component always keeps the email you originally passed to `initializeTransaction()` / `syncCustomerSubscriptions()` rather than whatever a later webhook or API response reports, so `listTransactions()` / `listSubscriptions()` stay queryable by the real address. This has not been observed in live mode.
 
 ## Troubleshooting
 
@@ -486,6 +487,8 @@ Use Flutterwave's [test cards](https://developer.flutterwave.com/docs/integratio
 **Subscription never appears** — Flutterwave doesn't send a webhook when a subscription is created, only for later charges and cancellations. Call `syncCustomerSubscriptions({ email })` after a plan-linked checkout succeeds — this is required, not just a fallback.
 
 **No `transaction_id` after redirect** — Flutterwave only includes `transaction_id` in the redirect when a chargeable attempt was made. A declined or abandoned checkout redirects with just `status` and `tx_ref`; there's nothing to verify server-side in that case.
+
+**A transaction/subscription doesn't show up when searching by the email you used** — if you're in Flutterwave test mode and see a `customerEmail` like `ravesb_<hash>_you@example.com` in the Convex dashboard, that's Flutterwave's sandbox rewriting the email in its own responses, not a bug in your data. Components built against 0.0.1 or earlier stored that mangled value; upgrade and re-run the flow to get the real email back.
 
 ## Contributing
 
