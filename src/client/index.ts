@@ -9,6 +9,22 @@ export type FlutterwaveOptions = {
   webhookSecretHash: string;
 };
 
+export type FlutterwavePaymentOption =
+  | "card"
+  | "account"
+  | "banktransfer"
+  | "ussd"
+  | "nqr"
+  | "mpesa"
+  | "mobilemoneyghana"
+  | "mobilemoneyuganda"
+  | "mobilemoneyrwanda"
+  | "mobilemoneyzambia"
+  | "barter"
+  | "credit"
+  | "opay"
+  | "fawrypay";
+
 export type InitializeTransactionArgs = {
   email: string;
   amount: number;
@@ -17,6 +33,10 @@ export type InitializeTransactionArgs = {
   txRef?: string;
   customerName?: string;
   customerPhoneNumber?: string;
+  /** Restricts which payment methods Flutterwave's hosted page offers. Omit to offer everything enabled on your account. */
+  paymentOptions?: FlutterwavePaymentOption[];
+  /** Links this checkout to a payment plan, turning it into a subscription. See createPaymentPlan(). */
+  paymentPlan?: string;
   metadata?: Record<string, unknown>;
 };
 
@@ -36,6 +56,24 @@ export type VerifyTransactionResult = {
   narration?: string;
   paidAt?: number;
   customerEmail: string;
+};
+
+export type CreatePaymentPlanArgs = {
+  name: string;
+  amount: number;
+  interval: "hourly" | "daily" | "weekly" | "monthly" | "quarterly" | "yearly" | "bi-annually";
+  currency?: string;
+  duration?: number;
+};
+
+export type PaymentPlanResult = {
+  planId: string;
+  name: string;
+  amount: number;
+  interval: string;
+  currency: string;
+  duration?: number;
+  status: string;
 };
 
 // Flutterwave does not sign webhook payloads. Instead, it echoes back the
@@ -172,6 +210,8 @@ export class Flutterwave {
         amount: args.amount,
         currency: args.currency ?? "NGN",
         redirect_url: args.redirectUrl,
+        payment_plan: args.paymentPlan,
+        payment_options: args.paymentOptions?.join(", "),
         customer: {
           email: args.email,
           name: args.customerName,
@@ -296,6 +336,128 @@ export class Flutterwave {
     });
   }
 
+  async createPaymentPlan(
+    ctx: GenericActionCtx<GenericDataModel>,
+    args: CreatePaymentPlanArgs,
+  ): Promise<PaymentPlanResult> {
+    const res = await fetch(`${FLUTTERWAVE_API_BASE}/payment-plans`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.options.secretKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: args.name,
+        amount: args.amount,
+        interval: args.interval,
+        currency: args.currency ?? "NGN",
+        duration: args.duration,
+      }),
+    });
+    const json = (await res.json()) as {
+      status: string;
+      message?: string;
+      data: {
+        id: number;
+        name: string;
+        amount: number;
+        interval: string;
+        currency: string;
+        duration?: number;
+        status: string;
+      };
+    };
+    if (json.status !== "success") {
+      throw new Error(json.message ?? "Failed to create Flutterwave payment plan");
+    }
+    return {
+      planId: String(json.data.id),
+      name: json.data.name,
+      amount: json.data.amount,
+      interval: json.data.interval,
+      currency: json.data.currency,
+      duration: json.data.duration,
+      status: json.data.status,
+    };
+  }
+
+  async listPaymentPlans(
+    _ctx: GenericActionCtx<GenericDataModel>,
+  ): Promise<PaymentPlanResult[]> {
+    const res = await fetch(`${FLUTTERWAVE_API_BASE}/payment-plans`, {
+      headers: { Authorization: `Bearer ${this.options.secretKey}` },
+    });
+    const json = (await res.json()) as {
+      status: string;
+      message?: string;
+      data: Array<{
+        id: number;
+        name: string;
+        amount: number;
+        interval: string;
+        currency: string;
+        duration?: number;
+        status: string;
+      }>;
+    };
+    if (json.status !== "success") {
+      throw new Error(json.message ?? "Failed to list Flutterwave payment plans");
+    }
+    return json.data.map((plan) => ({
+      planId: String(plan.id),
+      name: plan.name,
+      amount: plan.amount,
+      interval: plan.interval,
+      currency: plan.currency,
+      duration: plan.duration,
+      status: plan.status,
+    }));
+  }
+
+  /**
+   * Flutterwave has no "subscription created" webhook — a subscription is
+   * created implicitly the first time a customer pays through a checkout
+   * initialized with `paymentPlan`, and that charge webhook doesn't carry
+   * the subscription's own id (only the plan id). This reads the customer's
+   * subscriptions straight from Flutterwave's Subscriptions API and upserts
+   * them locally — call it after a plan-linked checkout returns, or from a
+   * manual "sync" action, as a reliable way to populate subscription state.
+   */
+  async syncCustomerSubscriptions(
+    ctx: GenericActionCtx<GenericDataModel>,
+    args: { email: string },
+  ): Promise<number> {
+    const res = await fetch(
+      `${FLUTTERWAVE_API_BASE}/subscriptions?email=${encodeURIComponent(args.email)}`,
+      { headers: { Authorization: `Bearer ${this.options.secretKey}` } },
+    );
+    const json = (await res.json()) as {
+      status: string;
+      message?: string;
+      data?: Array<{
+        id: number;
+        amount?: number;
+        plan?: number;
+        status: string;
+        customer?: { customer_email?: string };
+      }>;
+    };
+    if (json.status !== "success") {
+      throw new Error(json.message ?? "Failed to fetch Flutterwave subscriptions");
+    }
+    const subscriptions = json.data ?? [];
+    for (const sub of subscriptions) {
+      await ctx.runMutation(this.component.lib.recordSubscriptionEvent, {
+        subscriptionId: String(sub.id),
+        customerEmail: sub.customer?.customer_email ?? args.email,
+        planId: sub.plan !== undefined ? String(sub.plan) : undefined,
+        amount: sub.amount ?? undefined,
+        status: sub.status === "active" ? "active" : "cancelled",
+      });
+    }
+    return subscriptions.length;
+  }
+
   async getTransaction(ctx: RunQueryCtx, args: { txRef: string }) {
     return await ctx.runQuery(this.component.lib.getTransaction, args);
   }
@@ -314,6 +476,14 @@ export class Flutterwave {
 
   async hasActiveSubscription(ctx: RunQueryCtx, args: { customerEmail: string }): Promise<boolean> {
     return await ctx.runQuery(this.component.lib.hasActiveSubscription, args);
+  }
+
+  async listRecentEvents(ctx: RunQueryCtx, args?: { limit?: number }) {
+    return await ctx.runQuery(this.component.lib.listRecentEvents, args ?? {});
+  }
+
+  async getStats(ctx: RunQueryCtx) {
+    return await ctx.runQuery(this.component.lib.getStats, {});
   }
 }
 

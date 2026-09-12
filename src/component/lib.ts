@@ -43,6 +43,16 @@ const subscriptionValidator = v.object({
   updatedAt: v.number(),
 });
 
+const webhookEventValidator = v.object({
+  _id: v.id("webhookEvents"),
+  _creationTime: v.number(),
+  eventId: v.string(),
+  eventType: v.string(),
+  txRef: v.optional(v.string()),
+  payload: v.string(),
+  receivedAt: v.number(),
+});
+
 // ─── Queries ────────────────────────────────────────────────────────────────
 
 export const getTransaction = query({
@@ -101,6 +111,27 @@ export const hasActiveSubscription = query({
       .order("desc")
       .first();
     return sub?.status === "active";
+  },
+});
+
+export const listRecentEvents = query({
+  args: { limit: v.optional(v.number()) },
+  returns: v.array(webhookEventValidator),
+  handler: async (ctx, args) => {
+    return await ctx.db.query("webhookEvents").order("desc").take(args.limit ?? 50);
+  },
+});
+
+export const getStats = query({
+  args: {},
+  returns: v.object({ transactions: v.number(), subscriptions: v.number(), events: v.number() }),
+  handler: async (ctx) => {
+    const [transactions, subscriptions, events] = await Promise.all([
+      ctx.db.query("transactions").collect(),
+      ctx.db.query("subscriptions").collect(),
+      ctx.db.query("webhookEvents").collect(),
+    ]);
+    return { transactions: transactions.length, subscriptions: subscriptions.length, events: events.length };
   },
 });
 
