@@ -3,6 +3,23 @@ import { components } from "./_generated/api.js";
 import { Flutterwave } from "../../src/client/index.js";
 import { v } from "convex/values";
 
+const paymentOptionValidator = v.union(
+  v.literal("card"),
+  v.literal("account"),
+  v.literal("banktransfer"),
+  v.literal("ussd"),
+  v.literal("nqr"),
+  v.literal("mpesa"),
+  v.literal("mobilemoneyghana"),
+  v.literal("mobilemoneyuganda"),
+  v.literal("mobilemoneyrwanda"),
+  v.literal("mobilemoneyzambia"),
+  v.literal("barter"),
+  v.literal("credit"),
+  v.literal("opay"),
+  v.literal("fawrypay"),
+);
+
 const flutterwave = new Flutterwave(components.convexFlutterwave, {
   secretKey: process.env.FLW_SECRET_KEY!,
   webhookSecretHash: process.env.FLW_WEBHOOK_SECRET_HASH!,
@@ -12,7 +29,10 @@ export const initializeTransaction = action({
   args: {
     email: v.string(),
     amount: v.number(),
+    currency: v.optional(v.string()),
     redirectUrl: v.string(),
+    paymentPlan: v.optional(v.string()),
+    paymentOptions: v.optional(v.array(paymentOptionValidator)),
   },
   handler: async (ctx, args) => {
     return await flutterwave.initializeTransaction(ctx, args);
@@ -40,6 +60,13 @@ export const listTransactions = query({
   },
 });
 
+export const listSubscriptions = query({
+  args: { customerEmail: v.string() },
+  handler: async (ctx, args) => {
+    return await flutterwave.listSubscriptions(ctx, args);
+  },
+});
+
 export const hasActiveSubscription = query({
   args: { customerEmail: v.string() },
   handler: async (ctx, args) => {
@@ -52,5 +79,63 @@ export const cancelSubscription = action({
   handler: async (ctx, args) => {
     await flutterwave.cancelSubscription(ctx, args);
     return null;
+  },
+});
+
+export const enableSubscription = action({
+  args: { subscriptionId: v.string(), customerEmail: v.string() },
+  handler: async (ctx, args) => {
+    await flutterwave.enableSubscription(ctx, args);
+    return null;
+  },
+});
+
+export const syncSubscriptions = action({
+  args: { email: v.string() },
+  handler: async (ctx, args) => {
+    return await flutterwave.syncCustomerSubscriptions(ctx, { email: args.email });
+  },
+});
+
+// Bootstraps two demo payment plans on first run, idempotent by name — the
+// same pattern the [convex-paystack] example app uses.
+export const ensureDemoPlans = action({
+  args: {},
+  handler: async (ctx) => {
+    const existing = await flutterwave.listPaymentPlans(ctx);
+    const findOrCreate = async (
+      name: string,
+      amount: number,
+      interval: "monthly" | "yearly",
+    ) => {
+      const found = existing.find((p) => p.name === name);
+      if (found) return found;
+      return await flutterwave.createPaymentPlan(ctx, { name, amount, interval, currency: "NGN" });
+    };
+    const monthly = await findOrCreate("Convex + Flutterwave Demo — Monthly", 5000, "monthly");
+    const yearly = await findOrCreate("Convex + Flutterwave Demo — Yearly", 50000, "yearly");
+    return { monthly, yearly };
+  },
+});
+
+export const listRecentEvents = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    return await flutterwave.listRecentEvents(ctx, args);
+  },
+});
+
+export const getStats = query({
+  args: {},
+  handler: async (ctx) => {
+    return await flutterwave.getStats(ctx);
+  },
+});
+
+export const getWebhookUrl = query({
+  args: {},
+  handler: async () => {
+    const site = process.env.CONVEX_SITE_URL;
+    return site ? `${site}/webhooks/flutterwave` : null;
   },
 });

@@ -1,0 +1,72 @@
+:root {
+  color-scheme: light;
+
+  /* Flutterwave brand */
+  --flw-black: #1d1d1d;
+  --flw-black-soft: #2a2a2a;
+  --flw-orange: #fb9129;
+  --flw-orange-dark: #e07a12;
+  --flw-orange-soft: #fff2e2;
+  --flw-cream: #fff8ef;
+
+  /* Convex brand */
+  --convex-black: #17101a;
+  --convex-black-soft: #241a27;
+  --convex-red: #ee342f;
+  --convex-yellow: #f3b01c;
+  --convex-purple: #8d2676;
+  --convex-cream: #f7f2e7;
+
+  /* Neutrals */
+  --ink: #1a1408;
+  --ink-soft: #5a5142;
+  --paper: #faf7f2;
+  --card: #ffffff;
+  --border: #ece4d6;
+  --danger: #d1372d;
+  --danger-soft: #fdeceb;
+
+  --radius-lg: 20px;
+  --radius-md: 14px;
+  --radius-sm: 10px;
+  --shadow-soft: 0 1px 2px rgba(29, 29, 29, 0.06), 0 12px 32px -16px rgba(29, 29, 29, 0.2);
+  --shadow-lift: 0 4px 10px rgba(29, 29, 29, 0.08), 0 20px 48px -20px rgba(29, 29, 29, 0.3);
+
+  --brand-gradient: linear-gradient(135deg, var(--convex-red) 0%, var(--convex-yellow) 100%);
+  --mono-font: "SFMono-Regular", ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family:
+    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+}
+
+code {
+  font-family: var(--mono-font);
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--flw-orange-dark);
+  outline-offset: 2px;
+}
