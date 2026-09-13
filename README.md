@@ -7,6 +7,8 @@
 [![npm downloads](https://img.shields.io/npm/dw/convex-flutterwave)](https://www.npmjs.com/package/convex-flutterwave)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
 
+![convex-flutterwave demo](./demo.png)
+
 ```ts
 const flutterwave = new Flutterwave(components.convexFlutterwave, {
   secretKey: process.env.FLW_SECRET_KEY!,
