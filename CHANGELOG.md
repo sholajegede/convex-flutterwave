@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.2
+
+### Patch Changes
+
+- Add demo screenshot to README
+
 ## 0.0.1
 
 - Fix webhook verification to use Flutterwave's verif-hash header instead of a
