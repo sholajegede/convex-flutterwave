@@ -194,7 +194,7 @@ export class Flutterwave {
   }
 
   async initializeTransaction(
-    ctx: GenericActionCtx<GenericDataModel>,
+    ctx: RunMutationCtx,
     args: InitializeTransactionArgs,
   ): Promise<InitializeTransactionResult> {
     const txRef = args.txRef ?? crypto.randomUUID();
@@ -248,7 +248,7 @@ export class Flutterwave {
   }
 
   async verifyTransaction(
-    ctx: GenericActionCtx<GenericDataModel>,
+    ctx: RunMutationAndQueryCtx,
     args: { transactionId: string },
   ): Promise<VerifyTransactionResult> {
     const res = await fetch(
@@ -312,7 +312,7 @@ export class Flutterwave {
   }
 
   async cancelSubscription(
-    ctx: GenericActionCtx<GenericDataModel>,
+    ctx: RunMutationCtx,
     args: { subscriptionId: string; customerEmail: string },
   ): Promise<void> {
     const res = await fetch(
@@ -331,7 +331,7 @@ export class Flutterwave {
   }
 
   async enableSubscription(
-    ctx: GenericActionCtx<GenericDataModel>,
+    ctx: RunMutationCtx,
     args: { subscriptionId: string; customerEmail: string },
   ): Promise<void> {
     const res = await fetch(
@@ -350,7 +350,7 @@ export class Flutterwave {
   }
 
   async createPaymentPlan(
-    ctx: GenericActionCtx<GenericDataModel>,
+    _ctx: unknown,
     args: CreatePaymentPlanArgs,
   ): Promise<PaymentPlanResult> {
     const res = await fetch(`${FLUTTERWAVE_API_BASE}/payment-plans`, {
@@ -395,7 +395,7 @@ export class Flutterwave {
   }
 
   async listPaymentPlans(
-    _ctx: GenericActionCtx<GenericDataModel>,
+    _ctx: unknown,
   ): Promise<PaymentPlanResult[]> {
     const res = await fetch(`${FLUTTERWAVE_API_BASE}/payment-plans`, {
       headers: { Authorization: `Bearer ${this.options.secretKey}` },
@@ -455,7 +455,7 @@ export class Flutterwave {
   }
 
   async syncCustomerSubscriptions(
-    ctx: GenericActionCtx<GenericDataModel>,
+    ctx: RunMutationCtx,
     args: { email: string },
   ): Promise<number> {
     const json = await this.fetchFlutterwaveSubscriptions(args.email);
@@ -509,7 +509,7 @@ export class Flutterwave {
    * uses it as a fallback for exactly that reason.
    */
   async syncSubscriptionsByPlan(
-    ctx: GenericActionCtx<GenericDataModel>,
+    ctx: RunMutationCtx,
     args: { planId: string; email: string },
   ): Promise<number> {
     const json = await this.fetchFlutterwaveSubscriptions();
@@ -563,3 +563,16 @@ export class Flutterwave {
 type RunQueryCtx = {
   runQuery: GenericActionCtx<GenericDataModel>["runQuery"];
 };
+
+// initializeTransaction, cancelSubscription, enableSubscription,
+// syncCustomerSubscriptions, and syncSubscriptionsByPlan only ever call
+// ctx.runMutation. verifyTransaction calls both. Typing them against these
+// minimal structural types instead of the full
+// GenericActionCtx<GenericDataModel> means they accept any real app's
+// ActionCtx, whose DataModel is a concrete set of tables (not assignable to
+// the generic GenericDataModel once an app defines any tables of its own).
+type RunMutationCtx = {
+  runMutation: GenericActionCtx<GenericDataModel>["runMutation"];
+};
+
+type RunMutationAndQueryCtx = RunMutationCtx & RunQueryCtx;
