@@ -3,7 +3,7 @@
 **Accept payments and subscriptions with Flutterwave in your Convex app.** Reactive transactions, subscription state, and webhook ingestion.
 
 [![npm version](https://img.shields.io/npm/v/convex-flutterwave)](https://www.npmjs.com/package/convex-flutterwave)
-[![Convex Component](https://www.convex.dev/components/badge/sholajegede/convex-flutterwave)](https://www.convex.dev/components/convex-flutterwave)
+[![Convex Component](https://www.convex.dev/components/badge/convex-flutterwave)](https://www.convex.dev/components/convex-flutterwave)
 [![npm downloads](https://img.shields.io/npm/dw/convex-flutterwave)](https://www.npmjs.com/package/convex-flutterwave)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](./LICENSE)
 

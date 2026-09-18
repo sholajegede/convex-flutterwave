@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.5
+
+### Patch Changes
+
+- Fix the Convex directory badge image URL, which still pointed at `badge/sholajegede/convex-flutterwave` after the link URL was corrected in a previous release; both now use the plain `badge/convex-flutterwave` path.
+
+## 0.0.4
+
+### Patch Changes
+
+- Drop the username scope from the Convex directory badge link in README, matching the directory's updated URL format
+
 ## 0.0.3
 
 ### Patch Changes
