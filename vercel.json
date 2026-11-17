@@ -1,4 +1,7 @@
 {
   "buildCommand": "cd example && npm run build",
-  "outputDirectory": "example/dist"
+  "outputDirectory": "example/dist",
+  "rewrites": [
+    { "source": "/demos/convex-flutterwave/:path*", "destination": "/:path*" }
+  ]
 }
