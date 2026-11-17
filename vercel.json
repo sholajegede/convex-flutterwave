@@ -1,7 +1,17 @@
 {
   "buildCommand": "cd example && npm run build",
   "outputDirectory": "example/dist",
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "https://sholajegede.com/demos/convex-flutterwave",
+      "permanent": true
+    }
+  ],
   "rewrites": [
-    { "source": "/demos/convex-flutterwave/:path*", "destination": "/:path*" }
+    {
+      "source": "/demos/convex-flutterwave/:path*",
+      "destination": "/:path*"
+    }
   ]
 }
